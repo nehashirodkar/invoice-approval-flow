@@ -1,0 +1,22 @@
+# Local environment / secrets
+.env
+.env.*
+*.local
+
+# Power Platform CLI artifacts
+.pac/
+*.pac-*
+
+# Exported solution archives — keep the unpacked form under solution/, not the zips
+*.zip
+
+# IDE / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Real vendor invoices must never be committed — see samples/README.md
+samples/*.pdf
+!samples/README.md

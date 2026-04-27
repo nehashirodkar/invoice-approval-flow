@@ -1,0 +1,386 @@
+{
+  "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "$connections": {
+      "defaultValue": {},
+      "type": "Object"
+    },
+    "$authentication": {
+      "defaultValue": {},
+      "type": "SecureObject"
+    },
+    "SharedMailbox": {
+      "defaultValue": "ap@contoso.com",
+      "type": "String"
+    },
+    "SharePointSite": {
+      "defaultValue": "https://contoso.sharepoint.com/sites/finance",
+      "type": "String"
+    },
+    "InvoiceLibrary": {
+      "defaultValue": "Invoices",
+      "type": "String"
+    },
+    "AuditList": {
+      "defaultValue": "InvoiceAuditLog",
+      "type": "String"
+    },
+    "TeamsChannelId": {
+      "defaultValue": "19:abc123@thread.tacv2",
+      "type": "String"
+    },
+    "AutoApproveThreshold": {
+      "defaultValue": 1000,
+      "type": "Float"
+    },
+    "DefaultApprover": {
+      "defaultValue": "cfo@contoso.com",
+      "type": "String"
+    }
+  },
+  "triggers": {
+    "When_a_new_email_arrives_(V3)": {
+      "type": "OpenApiConnectionNotification",
+      "inputs": {
+        "host": {
+          "connectionName": "shared_office365",
+          "operationId": "OnNewEmailV3",
+          "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+        },
+        "parameters": {
+          "mailboxAddress": "@parameters('SharedMailbox')",
+          "folderPath": "Inbox",
+          "importance": "Any",
+          "fetchOnlyWithAttachment": true,
+          "subjectFilter": "Invoice",
+          "includeAttachments": true
+        }
+      },
+      "splitOn": "@triggerOutputs()?['body/value']"
+    }
+  },
+  "actions": {
+    "Initialize_AuditRow": {
+      "type": "InitializeVariable",
+      "inputs": {
+        "variables": [
+          {
+            "name": "AuditRow",
+            "type": "Object",
+            "value": {
+              "VendorName": "",
+              "InvoiceNumber": "",
+              "Amount": 0,
+              "DueDate": "",
+              "Status": "Pending",
+              "Approver": "",
+              "ApproverComment": "",
+              "PdfLink": "",
+              "ProcessedAt": ""
+            }
+          }
+        ]
+      },
+      "runAfter": {}
+    },
+    "For_each_attachment": {
+      "type": "Foreach",
+      "foreach": "@triggerOutputs()?['body/attachments']",
+      "actions": {
+        "Filter_PDF_only": {
+          "type": "If",
+          "expression": {
+            "and": [
+              {
+                "contains": [
+                  "@toLower(items('For_each_attachment')?['contentType'])",
+                  "pdf"
+                ]
+              }
+            ]
+          },
+          "actions": {
+            "Extract_invoice_fields": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_aibuilder",
+                  "operationId": "Predict",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_aibuilder"
+                },
+                "parameters": {
+                  "modelId": "b6e6ed5b-0000-0000-0000-prebuiltinvoice",
+                  "request": {
+                    "version": "2.0",
+                    "requestv2": {
+                      "$content-type": "@items('For_each_attachment')?['contentType']",
+                      "$content": "@items('For_each_attachment')?['contentBytes']"
+                    }
+                  }
+                }
+              },
+              "runAfter": {}
+            },
+            "Set_AuditRow_from_extraction": {
+              "type": "SetVariable",
+              "inputs": {
+                "name": "AuditRow",
+                "value": {
+                  "VendorName": "@{outputs('Extract_invoice_fields')?['body/predictionOutput/fields/VendorName/value']}",
+                  "InvoiceNumber": "@{outputs('Extract_invoice_fields')?['body/predictionOutput/fields/InvoiceId/value']}",
+                  "Amount": "@float(coalesce(outputs('Extract_invoice_fields')?['body/predictionOutput/fields/InvoiceTotal/value'], 0))",
+                  "DueDate": "@{outputs('Extract_invoice_fields')?['body/predictionOutput/fields/DueDate/value']}",
+                  "Status": "Pending",
+                  "Approver": "",
+                  "ApproverComment": "",
+                  "PdfLink": "",
+                  "ProcessedAt": "@{utcNow()}"
+                }
+              },
+              "runAfter": {
+                "Extract_invoice_fields": ["Succeeded"]
+              }
+            },
+            "Stage_PDF_in_SharePoint": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "CreateFile",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('SharePointSite')",
+                  "folderPath": "@{concat(parameters('InvoiceLibrary'), '/Pending')}",
+                  "name": "@items('For_each_attachment')?['name']",
+                  "body": "@items('For_each_attachment')?['contentBytes']"
+                }
+              },
+              "runAfter": {
+                "Set_AuditRow_from_extraction": ["Succeeded"]
+              }
+            },
+            "Decide_approval_path": {
+              "type": "If",
+              "expression": {
+                "and": [
+                  {
+                    "lessOrEquals": [
+                      "@variables('AuditRow')['Amount']",
+                      "@parameters('AutoApproveThreshold')"
+                    ]
+                  }
+                ]
+              },
+              "actions": {
+                "Mark_auto_approved": {
+                  "type": "SetVariable",
+                  "inputs": {
+                    "name": "AuditRow",
+                    "value": "@setProperty(setProperty(variables('AuditRow'), 'Status', 'Auto-Approved'), 'Approver', 'system')"
+                  }
+                }
+              },
+              "else": {
+                "actions": {
+                  "Start_and_wait_for_an_approval": {
+                    "type": "OpenApiConnectionWebhook",
+                    "inputs": {
+                      "host": {
+                        "connectionName": "shared_approvals",
+                        "operationId": "StartAndWaitForAnApproval",
+                        "apiId": "/providers/Microsoft.PowerApps/apis/shared_approvals"
+                      },
+                      "parameters": {
+                        "approvalType": "Approve/Reject - First to respond",
+                        "WebhookApprovalCreationInput/title": "@{concat('Invoice approval: ', variables('AuditRow')['VendorName'], ' — $', variables('AuditRow')['Amount'])}",
+                        "WebhookApprovalCreationInput/assignedTo": "@parameters('DefaultApprover')",
+                        "WebhookApprovalCreationInput/details": "@{concat('Vendor: ', variables('AuditRow')['VendorName'], '\nInvoice #: ', variables('AuditRow')['InvoiceNumber'], '\nAmount: $', string(variables('AuditRow')['Amount']), '\nDue: ', variables('AuditRow')['DueDate'])}",
+                        "WebhookApprovalCreationInput/itemLink": "@outputs('Stage_PDF_in_SharePoint')?['body/{Link}']",
+                        "WebhookApprovalCreationInput/itemLinkDescription": "Open invoice PDF"
+                      }
+                    }
+                  },
+                  "Apply_approver_response": {
+                    "type": "SetVariable",
+                    "inputs": {
+                      "name": "AuditRow",
+                      "value": "@setProperty(setProperty(setProperty(variables('AuditRow'), 'Status', if(equals(outputs('Start_and_wait_for_an_approval')?['body/outcome'], 'Approve'), 'Approved', 'Rejected')), 'Approver', outputs('Start_and_wait_for_an_approval')?['body/responses'][0]['responder']['email']), 'ApproverComment', outputs('Start_and_wait_for_an_approval')?['body/responses'][0]['comments'])"
+                    },
+                    "runAfter": {
+                      "Start_and_wait_for_an_approval": ["Succeeded"]
+                    }
+                  }
+                }
+              },
+              "runAfter": {
+                "Stage_PDF_in_SharePoint": ["Succeeded"]
+              }
+            },
+            "File_PDF_by_outcome": {
+              "type": "Switch",
+              "expression": "@variables('AuditRow')['Status']",
+              "cases": {
+                "Approved": {
+                  "case": "Approved",
+                  "actions": {
+                    "Move_to_Approved": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "MoveFileAsync",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('SharePointSite')",
+                          "sourceFileId": "@outputs('Stage_PDF_in_SharePoint')?['body/Id']",
+                          "destinationDataset": "@parameters('SharePointSite')",
+                          "destinationFolderPath": "@{concat(parameters('InvoiceLibrary'), '/Approved')}"
+                        }
+                      }
+                    }
+                  }
+                },
+                "Auto-Approved": {
+                  "case": "Auto-Approved",
+                  "actions": {
+                    "Move_to_Approved_auto": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "MoveFileAsync",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('SharePointSite')",
+                          "sourceFileId": "@outputs('Stage_PDF_in_SharePoint')?['body/Id']",
+                          "destinationDataset": "@parameters('SharePointSite')",
+                          "destinationFolderPath": "@{concat(parameters('InvoiceLibrary'), '/Approved')}"
+                        }
+                      }
+                    }
+                  }
+                },
+                "Rejected": {
+                  "case": "Rejected",
+                  "actions": {
+                    "Move_to_Rejected": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_sharepointonline",
+                          "operationId": "MoveFileAsync",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                        },
+                        "parameters": {
+                          "dataset": "@parameters('SharePointSite')",
+                          "sourceFileId": "@outputs('Stage_PDF_in_SharePoint')?['body/Id']",
+                          "destinationDataset": "@parameters('SharePointSite')",
+                          "destinationFolderPath": "@{concat(parameters('InvoiceLibrary'), '/Rejected')}"
+                        }
+                      }
+                    },
+                    "Reply_to_vendor": {
+                      "type": "OpenApiConnection",
+                      "inputs": {
+                        "host": {
+                          "connectionName": "shared_office365",
+                          "operationId": "ReplyToV3",
+                          "apiId": "/providers/Microsoft.PowerApps/apis/shared_office365"
+                        },
+                        "parameters": {
+                          "messageId": "@triggerOutputs()?['body/id']",
+                          "ReplyParameters/Body": "@{concat('Hello,\n\nUnfortunately invoice ', variables('AuditRow')['InvoiceNumber'], ' could not be approved.\n\nReason: ', variables('AuditRow')['ApproverComment'], '\n\nPlease address the issue and resubmit.\n\nFinance Team')}",
+                          "ReplyParameters/Importance": "Normal"
+                        }
+                      },
+                      "runAfter": {
+                        "Move_to_Rejected": ["Succeeded"]
+                      }
+                    }
+                  }
+                }
+              },
+              "default": {
+                "actions": {}
+              },
+              "runAfter": {
+                "Decide_approval_path": ["Succeeded"]
+              }
+            },
+            "Write_audit_row": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_sharepointonline",
+                  "operationId": "PostItem",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_sharepointonline"
+                },
+                "parameters": {
+                  "dataset": "@parameters('SharePointSite')",
+                  "table": "@parameters('AuditList')",
+                  "item": {
+                    "Title": "@{variables('AuditRow')['InvoiceNumber']}",
+                    "VendorName": "@{variables('AuditRow')['VendorName']}",
+                    "InvoiceNumber": "@{variables('AuditRow')['InvoiceNumber']}",
+                    "Amount": "@variables('AuditRow')['Amount']",
+                    "DueDate": "@{variables('AuditRow')['DueDate']}",
+                    "Status": "@{variables('AuditRow')['Status']}",
+                    "Approver": "@{variables('AuditRow')['Approver']}",
+                    "ApproverComment": "@{variables('AuditRow')['ApproverComment']}",
+                    "PdfLink": "@{outputs('Stage_PDF_in_SharePoint')?['body/{Link}']}",
+                    "ProcessedAt": "@{variables('AuditRow')['ProcessedAt']}"
+                  }
+                }
+              },
+              "runAfter": {
+                "File_PDF_by_outcome": ["Succeeded"]
+              }
+            },
+            "Post_to_Teams_channel": {
+              "type": "OpenApiConnection",
+              "inputs": {
+                "host": {
+                  "connectionName": "shared_teams",
+                  "operationId": "PostMessageToChannelV3",
+                  "apiId": "/providers/Microsoft.PowerApps/apis/shared_teams"
+                },
+                "parameters": {
+                  "channelId": "@parameters('TeamsChannelId')",
+                  "messageBody": {
+                    "content": "@{concat('<b>Invoice ', variables('AuditRow')['Status'], '</b><br>Vendor: ', variables('AuditRow')['VendorName'], '<br>Invoice #: ', variables('AuditRow')['InvoiceNumber'], '<br>Amount: $', string(variables('AuditRow')['Amount']), '<br>Approver: ', variables('AuditRow')['Approver'])}",
+                    "contentType": "html"
+                  }
+                }
+              },
+              "runAfter": {
+                "Write_audit_row": ["Succeeded"]
+              }
+            },
+            "Handle_extraction_failure": {
+              "type": "Compose",
+              "inputs": {
+                "stage": "Extract_invoice_fields",
+                "attachment": "@items('For_each_attachment')?['name']",
+                "error": "@result('Extract_invoice_fields')"
+              },
+              "runAfter": {
+                "Extract_invoice_fields": ["Failed", "TimedOut"]
+              }
+            }
+          },
+          "else": {
+            "actions": {}
+          }
+        }
+      },
+      "runAfter": {
+        "Initialize_AuditRow": ["Succeeded"]
+      }
+    }
+  },
+  "outputs": {}
+}

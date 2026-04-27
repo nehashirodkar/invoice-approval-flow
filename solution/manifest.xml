@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Power Platform solution manifest stub.
+
+  This file is included so the solution/ folder mirrors what `pac solution unpack`
+  produces from a real exported solution. To turn this design-only repo into a
+  deployable managed solution:
+
+    1. In a Dev environment, import solution/definition.json as a cloud flow.
+    2. Add the flow to a new unmanaged solution called `InvoiceApprovalFlow`.
+    3. Export the solution from make.powerautomate.com (Solutions -> Export).
+    4. Unpack the exported zip with the Power Platform CLI:
+         pac solution unpack --zipfile InvoiceApprovalFlow.zip --folder ./solution
+       which will overwrite this manifest.xml with the real one and add the
+       remaining solution metadata files (Other/Customizations.xml, etc.).
+-->
+<ImportExportXml version="9.2.0.0" SolutionPackageVersion="9.2" languagecode="1033"
+                 generatedBy="design-only-repo" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <SolutionManifest>
+    <UniqueName>InvoiceApprovalFlow</UniqueName>
+    <LocalizedNames>
+      <LocalizedName description="Invoice Approval Flow" languagecode="1033" />
+    </LocalizedNames>
+    <Descriptions>
+      <Description description="Power Automate cloud flow that extracts invoice data with AI Builder, routes for approval based on amount, and files outcomes to SharePoint and Teams." languagecode="1033" />
+    </Descriptions>
+    <Version>1.0.0.0</Version>
+    <Managed>0</Managed>
+    <Publisher>
+      <UniqueName>contoso</UniqueName>
+      <LocalizedNames>
+        <LocalizedName description="Contoso" languagecode="1033" />
+      </LocalizedNames>
+      <CustomizationPrefix>cto</CustomizationPrefix>
+      <CustomizationOptionValuePrefix>10000</CustomizationOptionValuePrefix>
+    </Publisher>
+    <RootComponents>
+      <RootComponent type="29" schemaName="cto_InvoiceApprovalFlow" behavior="0" />
+    </RootComponents>
+    <MissingDependencies />
+  </SolutionManifest>
+</ImportExportXml>
