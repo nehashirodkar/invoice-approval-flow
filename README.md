@@ -42,7 +42,8 @@ invoice-approval-flow/
 ├── docs/
 │   ├── architecture.md       Component breakdown and data flow
 │   ├── connectors.md         Connectors used + required permissions
-│   └── deployment.md         Click-by-click import and configuration
+│   ├── deployment.md         Click-by-click import and configuration
+│   └── demo-build-guide.md   Step-by-step build of a trimmed demo flow in the designer
 ├── solution/
 │   ├── definition.json       Power Automate flow definition (Workflow Definition Language)
 │   └── manifest.xml          Solution manifest stub
