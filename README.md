@@ -2,6 +2,8 @@
 
 A design-only repository describing an end-to-end **invoice approval workflow** built on Microsoft Power Platform. This repo contains the flow definition, architecture documentation, and deployment steps — no code is executed locally; the flow runs in a Power Platform environment after import.
 
+> **Tenant verification (2026-04-28):** AI Builder's prebuilt **Invoice Processing** model was confirmed available in the target Microsoft 365 tenant, the **Office 365 Outlook** trigger configures cleanly, and the **SharePoint** audit list (`InvoiceAuditLog`) was provisioned per `docs/deployment.md`. A full end-to-end run was not captured for this submission.
+
 ## Scenario
 
 When a vendor emails an invoice to a shared finance mailbox, the workflow:
